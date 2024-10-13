@@ -103,9 +103,7 @@ class NuscData(torch.utils.data.Dataset):
             crop_h = int((1 - np.random.uniform(*self.data_aug_conf['bot_pct_lim']))*newH) - fH
             crop_w = int(np.random.uniform(0, max(0, newW - fW)))
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
-            flip = False
-            if self.data_aug_conf['rand_flip'] and np.random.choice([0, 1]):
-                flip = True
+            flip = False if self.data_aug_conf['rand_flip'] and np.random.choice([0, 1]) else True
             rotate = np.random.uniform(*self.data_aug_conf['rot_lim'])
         else:
             resize = max(fH/H, fW/W)
@@ -169,8 +167,7 @@ class NuscData(torch.utils.data.Dataset):
         return torch.Tensor(pts)[:3]  # x,y,z
 
     def get_binimg(self, rec):
-        egopose = self.nusc.get('ego_pose',
-                                self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])['ego_pose_token'])
+        egopose = self.nusc.get('ego_pose', self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])['ego_pose_token'])
         trans = -np.array(egopose['translation'])
         rot = Quaternion(egopose['rotation']).inverse
         img = np.zeros((self.nx[0], self.nx[1]))
@@ -194,15 +191,13 @@ class NuscData(torch.utils.data.Dataset):
 
     def choose_cams(self):
         if self.is_train and self.data_aug_conf['Ncams'] < len(self.data_aug_conf['cams']):
-            cams = np.random.choice(self.data_aug_conf['cams'], self.data_aug_conf['Ncams'],
-                                    replace=False)
+            cams = np.random.choice(self.data_aug_conf['cams'], self.data_aug_conf['Ncams'], replace=False)
         else:
             cams = self.data_aug_conf['cams']
         return cams
 
     def __str__(self):
-        return f"""NuscData: {len(self)} samples. Split: {"train" if self.is_train else "val"}.
-                   Augmentation Conf: {self.data_aug_conf}"""
+        return f"""NuscData: {len(self)} samples. Split: {"train" if self.is_train else "val"}. \n Augmentation Conf: {self.data_aug_conf}"""
 
     def __len__(self):
         return len(self.ixes)
@@ -241,27 +236,22 @@ def worker_rnd_init(x):
     np.random.seed(13 + x)
 
 
-def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz,
-                 nworkers, parser_name):
-    nusc = NuScenes(version='v1.0-{}'.format(version),
-                    dataroot=os.path.join(dataroot, version),
-                    verbose=False)
+def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz, nworkers, parser_name):
+    nusc = NuScenes(version=f'v1.0-{version}', dataroot=dataroot, verbose=True)
     parser = {
         'vizdata': VizData,
         'segmentationdata': SegmentationData,
     }[parser_name]
-    traindata = parser(nusc, is_train=True, data_aug_conf=data_aug_conf,
-                         grid_conf=grid_conf)
-    valdata = parser(nusc, is_train=False, data_aug_conf=data_aug_conf,
-                       grid_conf=grid_conf)
+    train_dataset = parser(nusc, is_train=True, data_aug_conf=data_aug_conf, grid_conf=grid_conf)
+    val_dataset = parser(nusc, is_train=False, data_aug_conf=data_aug_conf, grid_conf=grid_conf)
 
-    trainloader = torch.utils.data.DataLoader(traindata, batch_size=bsz,
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz,
                                               shuffle=True,
                                               num_workers=nworkers,
                                               drop_last=True,
                                               worker_init_fn=worker_rnd_init)
-    valloader = torch.utils.data.DataLoader(valdata, batch_size=bsz,
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz,
                                             shuffle=False,
                                             num_workers=nworkers)
 
-    return trainloader, valloader
+    return train_loader, val_loader

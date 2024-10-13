@@ -4,43 +4,46 @@ Licensed under the NVIDIA Source Code License. See LICENSE at https://github.com
 Authors: Jonah Philion and Sanja Fidler
 """
 
-import torch
-from time import time
-from tensorboardX import SummaryWriter
-import numpy as np
 import os
+from time import time
 
-from .models import compile_model
+import numpy as np
+import torch
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+
 from .data import compile_data
+from .models import compile_model
 from .tools import SimpleLoss, get_batch_iou, get_val_info
 
 
 def train(version,
-            dataroot='/data/nuscenes',
-            nepochs=10000,
-            gpuid=1,
+          dataroot='/data/nuscenes',
+          nepochs=1000,
+          gpuid=0,
 
-            H=900, W=1600,
-            resize_lim=(0.193, 0.225),
-            final_dim=(128, 352),
-            bot_pct_lim=(0.0, 0.22),
-            rot_lim=(-5.4, 5.4),
-            rand_flip=True,
-            ncams=5,
-            max_grad_norm=5.0,
-            pos_weight=2.13,
-            logdir='./runs',
+          H=900, W=1600,
+          resize_lim=(0.193, 0.225),
+          final_dim=(128, 352),
+          bot_pct_lim=(0.0, 0.22),
+          rot_lim=(-5.4, 5.4),
+          rand_flip=True,
+          ncams=5,
+          max_grad_norm=5.0,
+          pos_weight=2.13,
+          logdir='./runs',
+          ckptdir='./ckpts',
 
-            xbound=[-50.0, 50.0, 0.5],
-            ybound=[-50.0, 50.0, 0.5],
-            zbound=[-10.0, 10.0, 20.0],
-            dbound=[4.0, 45.0, 1.0],
+          xbound=[-50.0, 50.0, 0.5],
+          ybound=[-50.0, 50.0, 0.5],
+          zbound=[-10.0, 10.0, 20.0],
+          dbound=[4.0, 45.0, 1.0],
 
-            bsz=4,
-            nworkers=10,
-            lr=1e-3,
-            weight_decay=1e-7,
-            ):
+          bsz=16,
+          nworkers=4,
+          lr=2e-3,
+          weight_decay=1e-7,
+          ):
     grid_conf = {
         'xbound': xbound,
         'ybound': ybound,
@@ -48,46 +51,45 @@ def train(version,
         'dbound': dbound,
     }
     data_aug_conf = {
-                    'resize_lim': resize_lim,
-                    'final_dim': final_dim,
-                    'rot_lim': rot_lim,
-                    'H': H, 'W': W,
-                    'rand_flip': rand_flip,
-                    'bot_pct_lim': bot_pct_lim,
-                    'cams': ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
-                             'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT'],
-                    'Ncams': ncams,
-                }
+        'resize_lim': resize_lim,
+        'final_dim': final_dim,
+        'rot_lim': rot_lim,
+        'H': H, 'W': W,
+        'rand_flip': rand_flip,
+        'bot_pct_lim': bot_pct_lim,
+        'cams': ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
+                 'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT'],
+        'Ncams': ncams,
+    }
     trainloader, valloader = compile_data(version, dataroot, data_aug_conf=data_aug_conf,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
                                           parser_name='segmentationdata')
 
     device = torch.device('cpu') if gpuid < 0 else torch.device(f'cuda:{gpuid}')
 
-    model = compile_model(grid_conf, data_aug_conf, outC=1)
-    model.to(device)
+    model = compile_model(grid_conf, data_aug_conf, outC=1).to(device)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     loss_fn = SimpleLoss(pos_weight).cuda(gpuid)
 
-    writer = SummaryWriter(logdir=logdir)
+    writer = SummaryWriter(log_dir=logdir)
     val_step = 1000 if version == 'mini' else 10000
 
     model.train()
     counter = 0
     for epoch in range(nepochs):
         np.random.seed()
-        for batchi, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(trainloader):
+        for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(tqdm(trainloader)):
             t0 = time()
             opt.zero_grad()
             preds = model(imgs.to(device),
-                    rots.to(device),
-                    trans.to(device),
-                    intrins.to(device),
-                    post_rots.to(device),
-                    post_trans.to(device),
-                    )
+                          rots.to(device),
+                          trans.to(device),
+                          intrins.to(device),
+                          post_rots.to(device),
+                          post_trans.to(device),
+                          )
             binimgs = binimgs.to(device)
             loss = loss_fn(preds, binimgs)
             loss.backward()
@@ -97,7 +99,7 @@ def train(version,
             t1 = time()
 
             if counter % 10 == 0:
-                print(counter, loss.item())
+                # print(counter, loss.item())
                 writer.add_scalar('train/loss', loss, counter)
 
             if counter % 50 == 0:
@@ -114,7 +116,7 @@ def train(version,
 
             if counter % val_step == 0:
                 model.eval()
-                mname = os.path.join(logdir, "model{}.pt".format(counter))
+                mname = os.path.join(ckptdir, f"model{counter}.pt")
                 print('saving', mname)
                 torch.save(model.state_dict(), mname)
                 model.train()

@@ -1,0 +1,5 @@
+tqdm
+pyquaternion
+matplotlib
+efficientnet_pytorch
+tensorboard

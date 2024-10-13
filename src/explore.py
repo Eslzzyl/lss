@@ -37,7 +37,7 @@ def lidar_check(version,
                 dbound=[4.0, 45.0, 1.0],
 
                 bsz=1,
-                nworkers=10,
+                nworkers=4,
                 ):
     grid_conf = {
         'xbound': xbound,
@@ -133,7 +133,7 @@ def cumsum_check(version,
                 dbound=[4.0, 45.0, 1.0],
 
                 bsz=4,
-                nworkers=10,
+                nworkers=4,
                 ):
     grid_conf = {
         'xbound': xbound,
@@ -209,7 +209,7 @@ def eval_model_iou(version,
                 dbound=[4.0, 45.0, 1.0],
 
                 bsz=4,
-                nworkers=10,
+                nworkers=4,
                 ):
     grid_conf = {
         'xbound': xbound,
@@ -266,7 +266,7 @@ def viz_model_preds(version,
                     dbound=[4.0, 45.0, 1.0],
 
                     bsz=4,
-                    nworkers=10,
+                    nworkers=4,
                     ):
     grid_conf = {
         'xbound': xbound,
