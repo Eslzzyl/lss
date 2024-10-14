@@ -94,7 +94,7 @@ def train(version,
     t_start = time()
     for epoch in range(nepochs):
         np.random.seed()
-        for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(tqdm(train_loader)):
+        for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(train_loader):
             t0 = time()
             opt.zero_grad()
             preds = model(imgs.cuda(),
@@ -113,7 +113,6 @@ def train(version,
             t1 = time()
 
             if counter % 10 == 0:
-                # print(counter, loss.item())
                 writer.add_scalar('train/loss', loss, counter)
 
             if counter % 50 == 0:
@@ -121,6 +120,12 @@ def train(version,
                 writer.add_scalar('train/iou', iou, counter)
                 writer.add_scalar('train/epoch', epoch, counter)
                 writer.add_scalar('train/step_time', t1 - t0, counter)
+            
+            if counter % 100 == 0 and local_rank == 0:
+                t_curr = time()
+                remaining_iter = total_iter - counter
+                remaining_time = (t_curr - t_start) / counter * remaining_iter
+                print(f'Epoch: {epoch}, counter: {counter}, loss: {loss.item()}, ETA: {remaining_time / 3600} hours')
 
             if counter % val_step == 0 and local_rank == 0:
                 val_info = get_val_info(model, val_loader, loss_fn, use_tqdm=True)
