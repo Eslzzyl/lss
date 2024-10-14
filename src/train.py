@@ -10,6 +10,7 @@ from time import time
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
+import torch.distributed as dist
 from tqdm import tqdm
 
 from .data import compile_data
@@ -17,10 +18,12 @@ from .models import compile_model
 from .tools import SimpleLoss, get_batch_iou, get_val_info
 
 
+local_rank = int(os.environ["LOCAL_RANK"])
+dist.init_process_group(backend="nccl")
+
 def train(version,
           dataroot='/data/nuscenes',
           nepochs=1000,
-          gpuid=0,
 
           H=900, W=1600,
           resize_lim=(0.193, 0.225),
@@ -61,26 +64,34 @@ def train(version,
                  'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT'],
         'Ncams': ncams,
     }
-    trainloader, valloader = compile_data(version, dataroot, data_aug_conf=data_aug_conf,
+    train_loader, val_loader = compile_data(version, dataroot, data_aug_conf=data_aug_conf,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
-                                          parser_name='segmentationdata')
+                                          local_rank=local_rank, parser_name='segmentationdata')
 
-    device = torch.device('cpu') if gpuid < 0 else torch.device(f'cuda:{gpuid}')
+    device = torch.device(f'cuda:{local_rank}')
 
-    model = compile_model(grid_conf, data_aug_conf, outC=1).to(device)
+    model = compile_model(grid_conf, data_aug_conf, outC=1)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    loss_fn = SimpleLoss(pos_weight).cuda(gpuid)
+    loss_fn = SimpleLoss(pos_weight).cuda()
+
+    if not os.path.exists(logdir):
+        os.makedirs(logdir)
+    if not os.path.exists(ckptdir):
+        os.makedirs(ckptdir)
 
     writer = SummaryWriter(log_dir=logdir)
     val_step = 1000 if version == 'mini' else 10000
 
     model.train()
     counter = 0
+    total_iter = nepochs * len(train_loader)
+    t_start = time()
     for epoch in range(nepochs):
         np.random.seed()
-        for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(tqdm(trainloader)):
+        for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(tqdm(train_loader)):
             t0 = time()
             opt.zero_grad()
             preds = model(imgs.to(device),
@@ -108,15 +119,19 @@ def train(version,
                 writer.add_scalar('train/epoch', epoch, counter)
                 writer.add_scalar('train/step_time', t1 - t0, counter)
 
-            if counter % val_step == 0:
-                val_info = get_val_info(model, valloader, loss_fn, device)
+            if counter % val_step == 0 and local_rank == 0:
+                val_info = get_val_info(model, val_loader, loss_fn, device, use_tqdm=True)
                 print('VAL', val_info)
                 writer.add_scalar('val/loss', val_info['loss'], counter)
                 writer.add_scalar('val/iou', val_info['iou'], counter)
 
-            if counter % val_step == 0:
                 model.eval()
                 mname = os.path.join(ckptdir, f"model{counter}.pt")
                 print('saving', mname)
                 torch.save(model.state_dict(), mname)
                 model.train()
+                
+        t_curr = time()
+        remaining_iter = total_iter - counter
+        remaining_time = (t_curr - t_start) / counter * remaining_iter
+        print(f'Epoch {epoch} finished, remaining time: {remaining_time / 3600:.2f} hours')

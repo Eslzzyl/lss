@@ -236,7 +236,7 @@ def worker_rnd_init(x):
     np.random.seed(13 + x)
 
 
-def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz, nworkers, parser_name):
+def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz, nworkers, local_rank, parser_name):
     nusc = NuScenes(version=f'v1.0-{version}', dataroot=dataroot, verbose=True)
     parser = {
         'vizdata': VizData,
@@ -245,10 +245,13 @@ def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz, nworkers, par
     train_dataset = parser(nusc, is_train=True, data_aug_conf=data_aug_conf, grid_conf=grid_conf)
     val_dataset = parser(nusc, is_train=False, data_aug_conf=data_aug_conf, grid_conf=grid_conf)
 
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz,
                                               shuffle=True,
                                               num_workers=nworkers,
                                               drop_last=True,
+                                              sampler=train_sampler,
                                               worker_init_fn=worker_rnd_init)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz,
                                             shuffle=False,
