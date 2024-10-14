@@ -85,7 +85,8 @@ def train(version,
         if not os.path.exists(ckptdir):
             os.makedirs(ckptdir)
 
-    writer = SummaryWriter(log_dir=logdir)
+    if local_rank == 0:
+        writer = SummaryWriter(log_dir=logdir)
     val_step = 1000 if version == 'mini' else 10000
 
     model.train()
@@ -112,10 +113,10 @@ def train(version,
             counter += 1
             t1 = time()
 
-            if counter % 10 == 0:
+            if counter % 10 == 0 and local_rank == 0:
                 writer.add_scalar('train/loss', loss, counter)
 
-            if counter % 50 == 0:
+            if counter % 50 == 0 and local_rank == 0:
                 _, _, iou = get_batch_iou(preds, binimgs)
                 writer.add_scalar('train/iou', iou, counter)
                 writer.add_scalar('train/epoch', epoch, counter)
