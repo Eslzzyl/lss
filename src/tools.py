@@ -240,7 +240,7 @@ def get_batch_iou(preds, binimgs):
     return intersect, union, intersect / union if (union > 0) else 1.0
 
 
-def get_val_info(model, valloader, loss_fn, use_tqdm=False):
+def get_val_info(model, valloader, loss_fn, local_rank, use_tqdm=False):
     model.eval()
     total_loss = 0.0
     total_intersect = 0.0
@@ -250,10 +250,10 @@ def get_val_info(model, valloader, loss_fn, use_tqdm=False):
     with torch.no_grad():
         for batch in loader:
             allimgs, rots, trans, intrins, post_rots, post_trans, binimgs = batch
-            preds = model(allimgs.cuda(), rots.cuda(),
-                          trans.cuda(), intrins.cuda(), post_rots.cuda(),
-                          post_trans.cuda())
-            binimgs = binimgs.cuda()
+            preds = model(allimgs.cuda(local_rank), rots.cuda(local_rank),
+                          trans.cuda(local_rank), intrins.cuda(local_rank), post_rots.cuda(local_rank),
+                          post_trans.cuda(local_rank))
+            binimgs = binimgs.cuda(local_rank)
 
             # loss
             total_loss += loss_fn(preds, binimgs).item() * preds.shape[0]

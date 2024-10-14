@@ -11,7 +11,6 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.distributed as dist
-from tqdm import tqdm
 
 from .data import compile_data
 from .models import compile_model
@@ -68,7 +67,7 @@ def train(version,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
                                           local_rank=local_rank, parser_name='segmentationdata')
 
-    model = compile_model(grid_conf, data_aug_conf, outC=1).cuda()
+    model = compile_model(grid_conf, data_aug_conf, outC=1).cuda(local_rank)
     model = torch.nn.parallel.DistributedDataParallel(
         model,
         device_ids=[local_rank],
@@ -78,7 +77,7 @@ def train(version,
 
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    loss_fn = SimpleLoss(pos_weight).cuda()
+    loss_fn = SimpleLoss(pos_weight).cuda(local_rank)
 
     if not os.path.exists(logdir):
         os.makedirs(logdir)
@@ -97,14 +96,14 @@ def train(version,
         for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(train_loader):
             t0 = time()
             opt.zero_grad()
-            preds = model(imgs.cuda(),
-                          rots.cuda(),
-                          trans.cuda(),
-                          intrins.cuda(),
-                          post_rots.cuda(),
-                          post_trans.cuda(),
+            preds = model(imgs.cuda(local_rank),
+                          rots.cuda(local_rank),
+                          trans.cuda(local_rank),
+                          intrins.cuda(local_rank),
+                          post_rots.cuda(local_rank),
+                          post_trans.cuda(local_rank),
                           )
-            binimgs = binimgs.cuda()
+            binimgs = binimgs.cuda(local_rank)
             loss = loss_fn(preds, binimgs)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
@@ -128,7 +127,7 @@ def train(version,
                 print(f'Epoch: {epoch}, counter: {counter}, loss: {loss.item()}, ETA: {remaining_time / 3600} hours')
 
             if counter % val_step == 0 and local_rank == 0:
-                val_info = get_val_info(model, val_loader, loss_fn, use_tqdm=True)
+                val_info = get_val_info(model, val_loader, loss_fn, local_rank, use_tqdm=True)
                 print('VAL', val_info)
                 writer.add_scalar('val/loss', val_info['loss'], counter)
                 writer.add_scalar('val/iou', val_info['iou'], counter)
