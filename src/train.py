@@ -143,8 +143,9 @@ def train(version,
                 torch.save(model.state_dict(), mname)
                 model.train()
             curr_iter += 1
-                
-        t_curr = time()
-        remaining_iter = total_iter - counter
-        remaining_time = (t_curr - t_start) / counter * remaining_iter
-        print(f'Epoch {epoch} finished, remaining time: {remaining_time / 3600:.2f} hours')
+
+        if local_rank == 0:
+            t_curr = time()
+            remaining_iter = total_iter - counter
+            remaining_time = (t_curr - t_start) / counter * remaining_iter
+            print(f'Epoch {epoch} finished, remaining time: {remaining_time / 3600:.2f} hours')
