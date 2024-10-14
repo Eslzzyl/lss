@@ -135,3 +135,5 @@ goodmodel.pt.bak
 storage/
 imagenet_pretrained/
 *.csv
+
+my_train.sh

@@ -68,10 +68,13 @@ def train(version,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
                                           local_rank=local_rank, parser_name='segmentationdata')
 
-    device = torch.device(f'cuda:{local_rank}')
-
-    model = compile_model(grid_conf, data_aug_conf, outC=1)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
+    model = compile_model(grid_conf, data_aug_conf, outC=1).cuda()
+    model = torch.nn.parallel.DistributedDataParallel(
+        model,
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=True
+        )
 
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -83,7 +86,7 @@ def train(version,
         os.makedirs(ckptdir)
 
     writer = SummaryWriter(log_dir=logdir)
-    val_step = 1000 if version == 'mini' else 10000
+    val_step = 1000 if version == 'mini' else 100
 
     model.train()
     counter = 0
@@ -94,14 +97,14 @@ def train(version,
         for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(tqdm(train_loader)):
             t0 = time()
             opt.zero_grad()
-            preds = model(imgs.to(device),
-                          rots.to(device),
-                          trans.to(device),
-                          intrins.to(device),
-                          post_rots.to(device),
-                          post_trans.to(device),
+            preds = model(imgs.cuda(),
+                          rots.cuda(),
+                          trans.cuda(),
+                          intrins.cuda(),
+                          post_rots.cuda(),
+                          post_trans.cuda(),
                           )
-            binimgs = binimgs.to(device)
+            binimgs = binimgs.cuda()
             loss = loss_fn(preds, binimgs)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
@@ -120,7 +123,7 @@ def train(version,
                 writer.add_scalar('train/step_time', t1 - t0, counter)
 
             if counter % val_step == 0 and local_rank == 0:
-                val_info = get_val_info(model, val_loader, loss_fn, device, use_tqdm=True)
+                val_info = get_val_info(model, val_loader, loss_fn, use_tqdm=True)
                 print('VAL', val_info)
                 writer.add_scalar('val/loss', val_info['loss'], counter)
                 writer.add_scalar('val/iou', val_info['iou'], counter)

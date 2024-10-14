@@ -6,11 +6,20 @@ git clone git@github.com:Eslzzyl/lift-splat-shoot.git -b main
 ```
 
 Install:
-```bash
 
-```
+1. Follow the instructions in https://pytorch.org/ to install newest `pytorch` and `torchvision`.
 
-> In order to use `nuscenes-devkit` with 3.12, you can use my fork: https://github.com/Eslzzyl/nuscenes-devkit
+2. Install `nuscenes-devkit`:
+    ```bash
+    pip install nuscenes-devkit
+    ```
+
+    > In order to use `nuscenes-devkit` with 3.12, you can use my fork: https://github.com/Eslzzyl/nuscenes-devkit
+
+3. Install other dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 Train:
 ```bash

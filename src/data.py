@@ -248,7 +248,6 @@ def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz, nworkers, loc
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz,
-                                              shuffle=True,
                                               num_workers=nworkers,
                                               drop_last=True,
                                               sampler=train_sampler,
