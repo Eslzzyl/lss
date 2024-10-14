@@ -96,6 +96,7 @@ def train(version,
     t_start = time()
     for epoch in range(nepochs):
         np.random.seed()
+        curr_iter = 0
         for _, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(train_loader):
             t0 = time()
             opt.zero_grad()
@@ -128,7 +129,7 @@ def train(version,
                 t_curr = time()
                 remaining_iter = total_iter - counter
                 remaining_time = (t_curr - t_start) / counter * remaining_iter
-                print(f'Epoch: {epoch+1}, counter: {counter}, loss: {loss.item()}, ETA: {remaining_time / 3600} hours')
+                print(f'Epoch: {epoch+1}, iter: {curr_iter}/{len(train_loader)}, loss: {loss.item()}, ETA: {remaining_time / 3600} hours')
 
             if counter % val_step == 0 and local_rank == 0:
                 val_info = get_val_info(model, val_loader, loss_fn, local_rank, use_tqdm=True)
@@ -141,6 +142,7 @@ def train(version,
                 print('saving', mname)
                 torch.save(model.state_dict(), mname)
                 model.train()
+            curr_iter += 1
                 
         t_curr = time()
         remaining_iter = total_iter - counter
