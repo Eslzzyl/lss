@@ -86,7 +86,7 @@ def train(version,
         os.makedirs(ckptdir)
 
     writer = SummaryWriter(log_dir=logdir)
-    val_step = 1000 if version == 'mini' else 100
+    val_step = 1000 if version == 'mini' else 10000
 
     model.train()
     counter = 0
