@@ -94,6 +94,7 @@ def train(version,
     total_iter = nepochs * len(train_loader)
     print("Start training...")
     t_start = time()
+    val_time = 0
     for epoch in range(nepochs):
         np.random.seed()
         curr_iter = 0
@@ -123,7 +124,7 @@ def train(version,
                 t_curr = time()
                 writer.add_scalar('train/iou', iou, counter)
                 writer.add_scalar('train/iter_time', t1 - t0, counter)
-                writer.add_scalar('train/average_iter_time', (t_curr - t_start)/counter, counter)
+                writer.add_scalar('train/average_iter_time', (t_curr - t_start - val_time)/counter, counter)
             
             if counter % 100 == 0 and local_rank == 0:
                 t_curr = time()
@@ -132,6 +133,7 @@ def train(version,
                 print(f'Epoch: {epoch+1}, iter: {curr_iter}/{len(train_loader)}, loss: {loss.item()}, ETA: {remaining_time / 3600} hours')
 
             if counter % val_step == 0 and local_rank == 0:
+                val_start_time = time()
                 val_info = get_val_info(model, val_loader, loss_fn, local_rank, use_tqdm=True)
                 print('VAL', val_info)
                 writer.add_scalar('val/loss', val_info['loss'], counter)
@@ -142,10 +144,12 @@ def train(version,
                 print('saving', mname)
                 torch.save(model.state_dict(), mname)
                 model.train()
+                val_end_time = time()
+                val_time += val_end_time - val_start_time
             curr_iter += 1
 
         if local_rank == 0:
             t_curr = time()
             remaining_iter = total_iter - counter
             remaining_time = (t_curr - t_start) / counter * remaining_iter
-            print(f'Epoch {epoch} finished, remaining time: {remaining_time / 3600:.2f} hours')
+            print(f'Epoch {epoch+1} finished, remaining time: {remaining_time / 3600:.2f} hours')
