@@ -137,3 +137,4 @@ imagenet_pretrained/
 *.csv
 
 my_train.sh
+ckpts
