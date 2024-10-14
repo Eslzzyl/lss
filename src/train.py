@@ -79,10 +79,11 @@ def train(version,
 
     loss_fn = SimpleLoss(pos_weight).cuda(local_rank)
 
-    if not os.path.exists(logdir):
-        os.makedirs(logdir)
-    if not os.path.exists(ckptdir):
-        os.makedirs(ckptdir)
+    if local_rank == 0:
+        if not os.path.exists(logdir):
+            os.makedirs(logdir)
+        if not os.path.exists(ckptdir):
+            os.makedirs(ckptdir)
 
     writer = SummaryWriter(log_dir=logdir)
     val_step = 1000 if version == 'mini' else 10000
