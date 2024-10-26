@@ -46,6 +46,9 @@ class CamEncode(nn.Module):
         self.depthnet = nn.Conv2d(512, self.D + self.C, kernel_size=1, padding=0)
 
     def get_depth_dist(self, x, eps=1e-20):
+        """
+        通过 softmax 函数计算深度分布
+        """
         return x.softmax(dim=1)
 
     def get_depth_feat(self, x):
@@ -103,8 +106,7 @@ class BevEncode(nn.Module):
 
         self.up1 = Up(64+256, 256, scale_factor=4)
         self.up2 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear',
-                              align_corners=True),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
@@ -132,10 +134,9 @@ class LiftSplatShoot(nn.Module):
         self.grid_conf = grid_conf
         self.data_aug_conf = data_aug_conf
 
-        dx, bx, nx = gen_dx_bx(self.grid_conf['xbound'],
-                                              self.grid_conf['ybound'],
-                                              self.grid_conf['zbound'],
-                                              )
+        dx, bx, nx = gen_dx_bx(self.grid_conf['xbound'], self.grid_conf['ybound'], self.grid_conf['zbound'])
+        # 下面这行代码的作用是将dx张量注册为模型的一个参数，但在训练过程中不会更新它的值。
+        # 这样做的原因可能是这个参数是一个固定的常量，或者是预先计算好的值，不需要在训练过程中进行调整。
         self.dx = nn.Parameter(dx, requires_grad=False)
         self.bx = nn.Parameter(bx, requires_grad=False)
         self.nx = nn.Parameter(nx, requires_grad=False)
@@ -144,20 +145,30 @@ class LiftSplatShoot(nn.Module):
         self.camC = 64
         self.frustum = self.create_frustum()
         self.D, _, _, _ = self.frustum.shape
-        self.camencode = CamEncode(self.D, self.camC, self.downsample)
-        self.bevencode = BevEncode(inC=self.camC, outC=outC)
+        self.cam_encode = CamEncode(self.D, self.camC, self.downsample)
+        self.bev_encode = BevEncode(inC=self.camC, outC=outC)
 
         # toggle using QuickCumsum vs. autograd
         self.use_quickcumsum = True
     
     def create_frustum(self):
         # make grid in image plane
+        # ogfH：可能是original final Height（原始最终高度）的缩写。ogfW类比。
         ogfH, ogfW = self.data_aug_conf['final_dim']
         fH, fW = ogfH // self.downsample, ogfW // self.downsample
-        ds = torch.arange(*self.grid_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        # dbound=[4.0, 45.0, 1.0]
+        # arange 生成一个一维张量，包含从dbound的起始值4.0到结束值45.0的间隔为1.0的序列。
+        # .view(-1, 1, 1)：将一维张量调整为三维张量，形状为(D, 1, 1)，其中D是深度维度的大小。
+        # .expand(-1, fH, fW)：将张量扩展为形状为(D, fH, fW)的三维张量。
+        ds = torch.arange(*self.grid_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)   # (D, fH, fW)
         D, _, _ = ds.shape
-        xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW)
-        ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW)
+        # linspace 生成一个一维张量，包含从0到ogfW - 1之间的fW个等间隔的浮点数。
+        # .view(1, 1, fW)：将一维张量调整为三维张量，形状为(1, 1, fW)。
+        # .expand(D, fH, fW)：将张量扩展为形状为(D, fH, fW)的三维张量。
+        xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW)    # (D, fH, fW)
+        # .view(1, fH, 1)：将一维张量调整为三维张量，形状为(1, fH, 1)。
+        # .expand(D, fH, fW)：将张量扩展为形状为(D, fH, fW)的三维张量。
+        ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW)    # (D, fH, fW)
 
         # D x H x W x 3
         frustum = torch.stack((xs, ys, ds), -1)
@@ -176,9 +187,7 @@ class LiftSplatShoot(nn.Module):
         points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3).matmul(points.unsqueeze(-1))
 
         # cam_to_ego
-        points = torch.cat((points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
-                            points[:, :, :, :, :, 2:3]
-                            ), 5)
+        points = torch.cat((points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3], points[:, :, :, :, :, 2:3]), 5)
         combine = rots.matmul(torch.inverse(intrins))
         points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
         points += trans.view(B, N, 1, 1, 1, 3)
@@ -188,10 +197,14 @@ class LiftSplatShoot(nn.Module):
     def get_cam_feats(self, x):
         """Return B x N x D x H/downsample x W/downsample x C
         """
+        # B 批量大小
+        # N 相机数量
+        # C 通道数量
+        # imH imW 图像高宽
         B, N, C, imH, imW = x.shape
 
         x = x.view(B*N, C, imH, imW)
-        x = self.camencode(x)
+        x = self.cam_encode(x)
         x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample)
         x = x.permute(0, 1, 3, 4, 5, 2)
 
@@ -199,7 +212,7 @@ class LiftSplatShoot(nn.Module):
 
     def voxel_pooling(self, geom_feats, x):
         B, N, D, H, W, C = x.shape
-        Nprime = B*N*D*H*W
+        Nprime = B * N * D * H * W
 
         # flatten x
         x = x.reshape(Nprime, C)
@@ -207,8 +220,7 @@ class LiftSplatShoot(nn.Module):
         # flatten indices
         geom_feats = ((geom_feats - (self.bx - self.dx/2.)) / self.dx).long()
         geom_feats = geom_feats.view(Nprime, 3)
-        batch_ix = torch.cat([torch.full([Nprime//B, 1], ix,
-                             device=x.device, dtype=torch.long) for ix in range(B)])
+        batch_ix = torch.cat([torch.full([Nprime//B, 1], ix, device=x.device, dtype=torch.long) for ix in range(B)])
         geom_feats = torch.cat((geom_feats, batch_ix), 1)
 
         # filter out points that are outside box
@@ -251,7 +263,7 @@ class LiftSplatShoot(nn.Module):
 
     def forward(self, x, rots, trans, intrins, post_rots, post_trans):
         x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
-        x = self.bevencode(x)
+        x = self.bev_encode(x)
         return x
 
 

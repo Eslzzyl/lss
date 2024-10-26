@@ -4,8 +4,10 @@ Licensed under the NVIDIA Source Code License. See LICENSE at https://github.com
 Authors: Jonah Philion and Sanja Fidler
 """
 
+import os
 import torch
 import matplotlib as mpl
+from tqdm import tqdm
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -156,38 +158,37 @@ def cumsum_check(version,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
                                           parser_name='segmentationdata')
 
-    device = torch.device('cpu') if gpuid < 0 else torch.device(f'cuda:{gpuid}')
     loader = trainloader
 
     model = compile_model(grid_conf, data_aug_conf, outC=1)
-    model.to(device)
+    model.cuda()
 
     model.eval()
     for batchi, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(loader):
 
         model.use_quickcumsum = False
         model.zero_grad()
-        out = model(imgs.to(device),
-                rots.to(device),
-                trans.to(device),
-                intrins.to(device),
-                post_rots.to(device),
-                post_trans.to(device),
+        out = model(imgs.cuda(),
+                rots.cuda(),
+                trans.cuda(),
+                intrins.cuda(),
+                post_rots.cuda(),
+                post_trans.cuda(),
                 )
         out.mean().backward()
-        print('autograd:    ', out.mean().detach().item(), model.camencode.depthnet.weight.grad.mean().item())
+        print('autograd:    ', out.mean().detach().item(), model.cam_encode.depthnet.weight.grad.mean().item())
 
         model.use_quickcumsum = True
         model.zero_grad()
-        out = model(imgs.to(device),
-                rots.to(device),
-                trans.to(device),
-                intrins.to(device),
-                post_rots.to(device),
-                post_trans.to(device),
+        out = model(imgs.cuda(),
+                rots.cuda(),
+                trans.cuda(),
+                intrins.cuda(),
+                post_rots.cuda(),
+                post_trans.cuda(),
                 )
         out.mean().backward()
-        print('quick cumsum:', out.mean().detach().item(), model.camencode.depthnet.weight.grad.mean().item())
+        print('quick cumsum:', out.mean().detach().item(), model.cam_encode.depthnet.weight.grad.mean().item())
         print()
 
 
@@ -230,19 +231,23 @@ def eval_model_iou(version,
                 }
     trainloader, valloader = compile_data(version, dataroot, data_aug_conf=data_aug_conf,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
-                                          parser_name='segmentationdata')
+                                          local_rank=0, parser_name='segmentationdata')
 
-    device = torch.device('cpu') if gpuid < 0 else torch.device(f'cuda:{gpuid}')
-
-    model = compile_model(grid_conf, data_aug_conf, outC=1)
+    model = compile_model(grid_conf, data_aug_conf, outC=1).cuda()
+    model = torch.nn.parallel.DistributedDataParallel(
+        model,
+        device_ids=[0],
+        output_device=0,
+        find_unused_parameters=True
+        )
     print('loading', modelf)
-    model.load_state_dict(torch.load(modelf))
-    model.to(device)
+    state_dict = torch.load(modelf, weights_only=False)
+    model.load_state_dict(state_dict, strict=True)
 
-    loss_fn = SimpleLoss(1.0).cuda(gpuid)
+    loss_fn = SimpleLoss(1.0).cuda()
 
     model.eval()
-    val_info = get_val_info(model, valloader, loss_fn, device)
+    val_info = get_val_info(model, valloader, loss_fn, use_tqdm=True)
     print(val_info)
 
 
@@ -267,6 +272,7 @@ def viz_model_preds(version,
 
                     bsz=4,
                     nworkers=4,
+                    out_dir='./visualize',
                     ):
     grid_conf = {
         'xbound': xbound,
@@ -286,18 +292,25 @@ def viz_model_preds(version,
                     'cams': cams,
                     'Ncams': 5,
                 }
+    # 检查 out_dir 是否存在，如果不存在则创建
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
     trainloader, valloader = compile_data(version, dataroot, data_aug_conf=data_aug_conf,
                                           grid_conf=grid_conf, bsz=bsz, nworkers=nworkers,
-                                          parser_name='segmentationdata')
+                                          local_rank=0, parser_name='segmentationdata')
     loader = trainloader if viz_train else valloader
     nusc_maps = get_nusc_maps(map_folder)
 
-    device = torch.device('cpu') if gpuid < 0 else torch.device(f'cuda:{gpuid}')
-
-    model = compile_model(grid_conf, data_aug_conf, outC=1)
+    model = compile_model(grid_conf, data_aug_conf, outC=1).cuda()
+    model = torch.nn.parallel.DistributedDataParallel(
+        model,
+        device_ids=[0],
+        output_device=0,
+        find_unused_parameters=True
+        )
     print('loading', modelf)
-    model.load_state_dict(torch.load(modelf))
-    model.to(device)
+    state_dict = torch.load(modelf, weights_only=False)
+    model.load_state_dict(state_dict, strict=True)
 
     dx, bx, _ = gen_dx_bx(grid_conf['xbound'], grid_conf['ybound'], grid_conf['zbound'])
     dx, bx = dx[:2].numpy(), bx[:2].numpy()
@@ -317,13 +330,13 @@ def viz_model_preds(version,
     model.eval()
     counter = 0
     with torch.no_grad():
-        for batchi, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(loader):
-            out = model(imgs.to(device),
-                    rots.to(device),
-                    trans.to(device),
-                    intrins.to(device),
-                    post_rots.to(device),
-                    post_trans.to(device),
+        for batchi, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(tqdm(loader)):
+            out = model(imgs.cuda(),
+                    rots.cuda(),
+                    trans.cuda(),
+                    intrins.cuda(),
+                    post_rots.cuda(),
+                    post_trans.cuda(),
                     )
             out = out.sigmoid().cpu()
 
@@ -358,6 +371,6 @@ def viz_model_preds(version,
                 add_ego(bx, dx)
 
                 imname = f'eval{batchi:06}_{si:03}.jpg'
-                print('saving', imname)
-                plt.savefig(imname)
+                # print('saving', imname)
+                plt.savefig(os.path.join(out_dir, imname))
                 counter += 1

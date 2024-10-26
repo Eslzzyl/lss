@@ -3,3 +3,4 @@ pyquaternion
 matplotlib
 efficientnet_pytorch
 tensorboard
+einops

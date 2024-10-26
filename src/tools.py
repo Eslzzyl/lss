@@ -36,8 +36,7 @@ def get_lidar_data(nusc, sample_rec, nsweeps, min_distance):
     ref_time = 1e-6 * ref_sd_rec['timestamp']
 
     # Homogeneous transformation matrix from global to _current_ ego car frame.
-    car_from_global = transform_matrix(ref_pose_rec['translation'], Quaternion(ref_pose_rec['rotation']),
-                                        inverse=True)
+    car_from_global = transform_matrix(ref_pose_rec['translation'], Quaternion(ref_pose_rec['rotation']), inverse=True)
 
     # Aggregate current and previous sweeps.
     sample_data_token = sample_rec['data']['LIDAR_TOP']
@@ -156,24 +155,34 @@ class NormalizeInverse(torchvision.transforms.Normalize):
     def __call__(self, tensor):
         return super().__call__(tensor.clone())
 
-
+# mean：图像的每个通道（RGB）的均值。这里的值 [0.485, 0.456, 0.406] 通常是基于 ImageNet 数据集计算得出的。
+# std：图像的每个通道（RGB）的标准差。这里的值 [0.229, 0.224, 0.225] 也是基于 ImageNet 数据集计算得出的。
 denormalize_img = torchvision.transforms.Compose((
             NormalizeInverse(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225]),
             torchvision.transforms.ToPILImage(),
         ))
 
-
+# 同上
 normalize_img = torchvision.transforms.Compose((
-                torchvision.transforms.ToTensor(),
-                torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-))
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
+            ),
+        ))
 
 
 def gen_dx_bx(xbound, ybound, zbound):
+    """
+    根据给定的边界参数（xbound, ybound, zbound）生成三个张量：dx, bx 和 nx。这些张量分别表示每个维度的步长、中心点和网格数量。
+    """
+    # 步长（每个bound的第3个参数）
     dx = torch.Tensor([row[2] for row in [xbound, ybound, zbound]])
+    # 中心点（每个bound的第1个参数加上第3个参数的一半）
+    # 这里是每个网格单元的中心位置
     bx = torch.Tensor([row[0] + row[2]/2.0 for row in [xbound, ybound, zbound]])
+    # 网格数量
     nx = torch.LongTensor([(row[1] - row[0]) / row[2] for row in [xbound, ybound, zbound]])
 
     return dx, bx, nx
@@ -240,7 +249,7 @@ def get_batch_iou(preds, binimgs):
     return intersect, union, intersect / union if (union > 0) else 1.0
 
 
-def get_val_info(model, valloader, loss_fn, local_rank, use_tqdm=False):
+def get_val_info(model, valloader, loss_fn, local_rank=0, use_tqdm=False):
     model.eval()
     total_loss = 0.0
     total_intersect = 0.0
@@ -259,7 +268,12 @@ def get_val_info(model, valloader, loss_fn, local_rank, use_tqdm=False):
             total_loss += loss_fn(preds, binimgs).item() * preds.shape[0]
 
             # iou
+            # print("preds:", preds)
+            # print("binimgs:", binimgs)
+            # print("preds shape:", preds.shape)
+            # print("binimgs shape:", binimgs.shape)
             intersect, union, _ = get_batch_iou(preds, binimgs)
+            # print(intersect, union)
             total_intersect += intersect
             total_union += union
 

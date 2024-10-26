@@ -17,7 +17,7 @@ from .models import compile_model
 from .tools import SimpleLoss, get_batch_iou, get_val_info
 
 
-local_rank = int(os.environ["LOCAL_RANK"])
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
 dist.init_process_group(backend="nccl")
 
 def train(version,
@@ -38,7 +38,7 @@ def train(version,
 
           xbound=[-50.0, 50.0, 0.5],
           ybound=[-50.0, 50.0, 0.5],
-          zbound=[-10.0, 10.0, 20.0],
+          zbound=[-10.0, 10.0, 20.0],   # 在 z 方向上，仅有 1 个网格。因为 BEV 显然忽略了高度信息。
           dbound=[4.0, 45.0, 1.0],
 
           bsz=16,

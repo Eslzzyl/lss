@@ -14,29 +14,39 @@ Install:
     pip install nuscenes-devkit
     ```
 
-    > In order to use `nuscenes-devkit` with 3.12, you can use my fork: https://github.com/Eslzzyl/nuscenes-devkit
+    > In order to use `nuscenes-devkit` with Python 3.12, you can use my fork: https://github.com/Eslzzyl/nuscenes-devkit
 
 3. Install other dependencies:
     ```bash
     pip install -r requirements.txt
     ```
 
+Prepare Data:
+
+You should download the nuScenes dataset from its official website and unpack it to a place with enough disk space (no less than 500 GB for `trainval` subset). Theoretically, `mini` subset and `trainval` subset are both supported. I only tested this code for `trainval` subset.
+
 Train:
+
+It is recommended to copy the `train.sh` to a new `my_train.sh` script, and modify `my_train.sh` according to your hardware conditions. Current setting in `train.sh` should be able to train on a 8 * RTX 2080Ti server equipped with no less than 100GB CPU memory. You should also modify the nuScenes dataset root path and TensorBoard log path according to your need.
+
+Then start the training:
 ```bash
-python main.py train trainval --dataroot=NUSCENES_ROOT --logdir=./runs --gpuid=0
+bash my_train.sh
 ```
+
+> A pretrained EfficientNet checkpoint will be automatically downloaded from pytorch hub. This operation will be performed only once.
 
 Use TensorBoard:
 ```bash
-tensorboard --logdir=./runs --bind_all
+tensorboard --logdir=./runs
 ```
 
 Visualize:
 ```bash
-python main.py viz_model_preds trainval --modelf=MODEL_LOCATION --dataroot=NUSCENES_ROOT --map_folder=NUSCENES_MAP_ROOT
+bash visual.sh
 ```
 
 Evaluate:
 ```bash
-python main.py eval_model_iou trainval --modelf=MODEL_LOCATION --dataroot=NUSCENES_ROOT
+bash eval.sh
 ```

@@ -71,7 +71,9 @@ class NuscData(torch.utils.data.Dataset):
 
     
     def get_scenes(self):
-        # filter by scene split
+        '''
+        nuScenes 存在 mini 和 trainval 两个子集。这个函数的作用是根据 self.nusc.version 和 self.is_train 来返回对应的子集中的 scenes
+        '''
         split = {
             'v1.0-trainval': {True: 'train', False: 'val'},
             'v1.0-mini': {True: 'mini_train', False: 'mini_val'},
@@ -82,13 +84,12 @@ class NuscData(torch.utils.data.Dataset):
         return scenes
 
     def prepro(self):
-        samples = [samp for samp in self.nusc.sample]
+        samples = [s for s in self.nusc.sample]
 
-        # remove samples that aren't in this split
-        samples = [samp for samp in samples if
-                   self.nusc.get('scene', samp['scene_token'])['name'] in self.scenes]
+        # 去除不在当前子集（mini 或 trainval）中的 samples
+        samples = [s for s in samples if self.nusc.get('scene', s['scene_token'])['name'] in self.scenes]
 
-        # sort by scene, timestamp (only to make chronological viz easier)
+        # 按照 scene_token 和 timestamp 排序
         samples.sort(key=lambda x: (x['scene_token'], x['timestamp']))
 
         return samples
@@ -118,26 +119,29 @@ class NuscData(torch.utils.data.Dataset):
 
     def get_image_data(self, rec, cams):
         imgs = []
-        rots = []
-        trans = []
-        intrins = []
-        post_rots = []
-        post_trans = []
+        rotations = []
+        translations = []
+        camera_intrinsics = []
+        post_rotations = []
+        post_translations = []
         for cam in cams:
-            samp = self.nusc.get('sample_data', rec['data'][cam])
-            imgname = os.path.join(self.nusc.dataroot, samp['filename'])
-            img = Image.open(imgname)
-            post_rot = torch.eye(2)
-            post_tran = torch.zeros(2)
+            sample = self.nusc.get('sample_data', rec['data'][cam])
+            img_name = os.path.join(self.nusc.dataroot, sample['filename'])
+            img = Image.open(img_name)
+            post_rotation = torch.eye(2)
+            post_translation = torch.zeros(2)
 
-            sens = self.nusc.get('calibrated_sensor', samp['calibrated_sensor_token'])
-            intrin = torch.Tensor(sens['camera_intrinsic'])
-            rot = torch.Tensor(Quaternion(sens['rotation']).rotation_matrix)
-            tran = torch.Tensor(sens['translation'])
+            sensors = self.nusc.get('calibrated_sensor', sample['calibrated_sensor_token'])
+            # 相机内参
+            camera_intrinsic = torch.Tensor(sensors['camera_intrinsic'])
+            # 相机位姿
+            rotation = torch.Tensor(Quaternion(sensors['rotation']).rotation_matrix)
+            # 相机位移
+            translation = torch.Tensor(sensors['translation'])
 
             # augmentation (resize, crop, horizontal flip, rotate)
             resize, resize_dims, crop, flip, rotate = self.sample_augmentation()
-            img, post_rot2, post_tran2 = img_transform(img, post_rot, post_tran,
+            img, aug_post_rotation, aug_post_translation = img_transform(img, post_rotation, post_translation,
                                                      resize=resize,
                                                      resize_dims=resize_dims,
                                                      crop=crop,
@@ -146,30 +150,44 @@ class NuscData(torch.utils.data.Dataset):
                                                      )
             
             # for convenience, make augmentation matrices 3x3
-            post_tran = torch.zeros(3)
-            post_rot = torch.eye(3)
-            post_tran[:2] = post_tran2
-            post_rot[:2, :2] = post_rot2
+            post_translation = torch.zeros(3)
+            post_rotation = torch.eye(3)
+            post_translation[:2] = aug_post_translation
+            post_rotation[:2, :2] = aug_post_rotation
 
             imgs.append(normalize_img(img))
-            intrins.append(intrin)
-            rots.append(rot)
-            trans.append(tran)
-            post_rots.append(post_rot)
-            post_trans.append(post_tran)
+            camera_intrinsics.append(camera_intrinsic)
+            rotations.append(rotation)
+            translations.append(translation)
+            post_rotations.append(post_rotation)
+            post_translations.append(post_translation)
 
-        return (torch.stack(imgs), torch.stack(rots), torch.stack(trans),
-                torch.stack(intrins), torch.stack(post_rots), torch.stack(post_trans))
+        return (torch.stack(imgs), torch.stack(rotations), torch.stack(translations),
+                torch.stack(camera_intrinsics), torch.stack(post_rotations), torch.stack(post_translations))
 
     def get_lidar_data(self, rec, nsweeps):
-        pts = get_lidar_data(self.nusc, rec,
-                       nsweeps=nsweeps, min_distance=2.2)
-        return torch.Tensor(pts)[:3]  # x,y,z
+        # Returned tensor is 5(x, y, z, reflectance, dt) x N
+        pts = get_lidar_data(self.nusc, rec, nsweeps=nsweeps, min_distance=2.2)
+        return torch.Tensor(pts)[:3]  # reflectance and dt are not used
 
     def get_binimg(self, rec):
-        egopose = self.nusc.get('ego_pose', self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])['ego_pose_token'])
-        trans = -np.array(egopose['translation'])
-        rot = Quaternion(egopose['rotation']).inverse
+        """
+        获取二值图像。
+
+        参数:
+        rec (dict): 包含 annotations 和传感器数据的记录。
+
+        返回:
+        torch.Tensor: 生成的二值图像，形状为 (1, nx[0], nx[1])。
+
+        说明:
+        该方法从记录中提取 annotations，并根据自车位姿对每个 annotations 进行变换。然后，将每个 annotations 的底部角点转换为图像坐标，并在图像中填充相应的多边形区域，生成二值图像。
+
+        这个函数主要用于将三维空间中的车辆边界框投影到二维平面上。
+        """
+        ego_pose = self.nusc.get('ego_pose', self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])['ego_pose_token'])
+        trans = -np.array(ego_pose['translation'])
+        rot = Quaternion(ego_pose['rotation']).inverse
         img = np.zeros((self.nx[0], self.nx[1]))
         for tok in rec['anns']:
             inst = self.nusc.get('sample_annotation', tok)
@@ -190,6 +208,8 @@ class NuscData(torch.utils.data.Dataset):
         return torch.Tensor(img).unsqueeze(0)
 
     def choose_cams(self):
+        # self.data_aug_conf['cams'] 来自 train.py 中的配置，它的值是 ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT']
+        # 即，self.data_aug_conf['cams'] 是一个长度为 6 的列表
         if self.is_train and self.data_aug_conf['Ncams'] < len(self.data_aug_conf['cams']):
             cams = np.random.choice(self.data_aug_conf['cams'], self.data_aug_conf['Ncams'], replace=False)
         else:
@@ -204,6 +224,11 @@ class NuscData(torch.utils.data.Dataset):
 
 
 class VizData(NuscData):
+    '''
+    用于测试和验证的数据集
+
+    和 SegmentationData 的唯一不同是多返回了 lidar_data
+    '''
     def __init__(self, *args, **kwargs):
         super(VizData, self).__init__(*args, **kwargs)
     
@@ -219,6 +244,11 @@ class VizData(NuscData):
 
 
 class SegmentationData(NuscData):
+    '''
+    用于训练的数据集
+
+    和 VizData 的唯一不同是没有返回 lidar_data
+    '''
     def __init__(self, *args, **kwargs):
         super(SegmentationData, self).__init__(*args, **kwargs)
     
@@ -232,26 +262,27 @@ class SegmentationData(NuscData):
         return imgs, rots, trans, intrins, post_rots, post_trans, binimg
 
 
-def worker_rnd_init(x):
+def worker_random_init(x):
     np.random.seed(13 + x)
 
 
 def compile_data(version, dataroot, data_aug_conf, grid_conf, bsz, nworkers, local_rank, parser_name):
     nusc = NuScenes(version=f'v1.0-{version}', dataroot=dataroot, verbose=True)
     parser = {
-        'vizdata': VizData,
-        'segmentationdata': SegmentationData,
+        'vizdata': VizData,     # 用于测试和验证
+        'segmentationdata': SegmentationData,   # 用于训练
     }[parser_name]
     train_dataset = parser(nusc, is_train=True, data_aug_conf=data_aug_conf, grid_conf=grid_conf)
     val_dataset = parser(nusc, is_train=False, data_aug_conf=data_aug_conf, grid_conf=grid_conf)
 
+    # 分布式训练需要使用自定义的分布式采样器
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz,
                                               num_workers=nworkers,
                                               drop_last=True,
-                                              sampler=train_sampler,
-                                              worker_init_fn=worker_rnd_init)
+                                              sampler=train_sampler,    # 分布式采样器，注意自定义采样器与shuffle不能同时使用
+                                              worker_init_fn=worker_random_init)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz,
                                             shuffle=False,
                                             num_workers=nworkers)
